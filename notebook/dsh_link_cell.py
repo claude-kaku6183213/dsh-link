@@ -1,21 +1,33 @@
 # ============================================================ DSH LINK PUBLISHER
-# Ye block notebook ke andar publish()/shutdown()/renewer() se call hota hai aur
-# GitHub repo ke state/current.json me current tunnel link (encrypted) likh deta hai.
-# Required Kaggle Secrets: LINK_REPO, LINK_PAT, LINK_PASSPHRASE
-# Optional: LINK_BRANCH (default main), LINK_PATH (default state/current.json),
-#           LINK_SALT (default dsh-link-v1 -- app.js ke salt se match karna chahiye)
+# Ye block notebook ke publish()/shutdown()/renewer() se call hota hai aur current
+# tunnel link (AES-GCM encrypted) ko in targets me se jitne configured hain unme likhta hai:
+#
+#   1. SUPABASE table  (default ON, koi extra token nahi -- wahi DATABASE_URL connection)
+#   2. HTTP endpoint   (optional, e.g. Cloudflare Worker) -- LINK_API_URL + LINK_API_SECRET
+#   3. GitHub repo     (optional backup)                   -- LINK_REPO + LINK_PAT
+#
+# Required Kaggle Secrets: LINK_PASSPHRASE   (optional: LINK_DB=0 se supabase off)
+# App inhi me se sabse fresh payload uthaati hai.
 
-LINK_REPO = secret("LINK_REPO")                  # "username/repo"
-LINK_PAT = secret("LINK_PAT")                    # fine-grained PAT: Contents = Read and write
-LINK_PASSPHRASE = secret("LINK_PASSPHRASE")      # app me yahi passphrase daalna hai
+LINK_PASSPHRASE = secret("LINK_PASSPHRASE")
+LINK_TABLE = secret("LINK_TABLE", "launch_state")
+LINK_DB_ON = str(secret("LINK_DB", "1")).strip().lower() not in ("0", "false", "no", "off")
+LINK_API_URL = secret("LINK_API_URL")
+LINK_API_SECRET = secret("LINK_API_SECRET")
+LINK_REPO = secret("LINK_REPO")
+LINK_PAT = secret("LINK_PAT")
 LINK_BRANCH = secret("LINK_BRANCH", "main")
 LINK_PATH = secret("LINK_PATH", "state/current.json")
 LINK_SALT = secret("LINK_SALT", "dsh-link-v1")
 LINK_ITER = 200000
 LINK_MIN_INTERVAL = 480                          # heartbeat re-publish interval (sec)
+LINK_GH_INTERVAL = 3600                          # github fallback: itna hi baar commit (repo bloat se bacho)
 LINK_API = os.environ.get("GITHUB_API_BASE", "https://api.github.com")
 
-LINK = {"status": None, "at": 0.0, "warned": False, "err_logged": 0.0}
+if not re.match(r"^[a-z_][a-z0-9_]*$", LINK_TABLE):     # config se aaya naam, validate kar lo
+    raise SystemExit("LINK_TABLE invalid: " + LINK_TABLE)
+
+LINK = {"status": None, "at": 0.0, "warned": False, "err_logged": 0.0, "gh_status": None, "gh_at": 0.0}
 
 
 def _link_blob(payload):
@@ -32,6 +44,24 @@ def _link_blob(payload):
                        "it": LINK_ITER, "salt": LINK_SALT, "iv": b64(iv), "ct": b64(ct)}, indent=1)
 
 
+# ------------------------------------------------------------------ target 1: supabase/postgres
+def _link_db_push(blob):
+    db(f"insert into {LINK_TABLE}(id, enc, updated_at) values (1, %s, now()) "
+       f"on conflict (id) do update set enc = excluded.enc, updated_at = now()", (blob,))
+    return True
+
+
+# ------------------------------------------------------------------ target 2: http (worker)
+def _link_api_push(blob):
+    req = urllib.request.Request(LINK_API_URL, data=blob.encode(), method="POST")
+    req.add_header("Authorization", "Bearer " + LINK_API_SECRET)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "dsh-link/1.0")
+    with urllib.request.urlopen(req, timeout=25) as r:
+        return 200 <= r.status < 300
+
+
+# ------------------------------------------------------------------ target 3: github
 def _link_gh(method, url, body=None):
     req = urllib.request.Request(url, data=body, method=method)
     req.add_header("Authorization", "Bearer " + LINK_PAT)
@@ -44,9 +74,9 @@ def _link_gh(method, url, body=None):
         return json.load(r)
 
 
-def _link_push(text, msg):
+def _link_gh_push(blob, msg):
     base = f"{LINK_API}/repos/{LINK_REPO}/contents/{LINK_PATH}"
-    content = base64.b64encode(text.encode()).decode()
+    content = base64.b64encode(blob.encode()).decode()
     for attempt in range(3):
         sha = None
         try:
@@ -68,6 +98,17 @@ def _link_push(text, msg):
     return False
 
 
+def _link_targets():
+    t = []
+    if LINK_DB_ON and DATABASE_URL:
+        t.append("db")
+    if LINK_API_URL and LINK_API_SECRET:
+        t.append("api")
+    if LINK_REPO and LINK_PAT:
+        t.append("github")
+    return t
+
+
 def _link_still_mine():
     """Handoff ke baad purana node naye node ka 'online' status overwrite na kare."""
     try:
@@ -77,12 +118,13 @@ def _link_still_mine():
 
 
 def publish_remote(status, force=False):
-    """Best-effort: link state GitHub pe likho. Kabhi exception nahi throw karta."""
+    """Best-effort: link state configured targets me likho. Kabhi exception nahi throw karta."""
     try:
-        if not (LINK_REPO and LINK_PAT and LINK_PASSPHRASE):
+        targets = _link_targets()
+        if not LINK_PASSPHRASE or not targets:
             if not LINK["warned"]:
                 LINK["warned"] = True
-                log("launcher: LINK_REPO/LINK_PAT/LINK_PASSPHRASE secrets missing -> app link publish off")
+                log("launcher: koi target configured nahi (LINK_PASSPHRASE + LINK_DB ya LINK_API_URL/SECRET ya LINK_REPO/PAT) -> app link publish off")
             return False
         if status != "offline" and not S.launch_url:
             return False
@@ -96,10 +138,29 @@ def publish_remote(status, force=False):
         if status != "offline":
             payload["url"] = S.launch_url
             payload["public"] = f"https://{S.host}/" if S.host else None
-        _link_push(_link_blob(payload), f"dsh-link: {status} [{NODE_NAME}] {time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))}")
-        LINK["status"], LINK["at"] = status, now
-        log(f"launcher: published '{status}' to {LINK_REPO}/{LINK_PATH}")
-        return True
+        blob = _link_blob(payload)
+        msg = f"dsh-link: {status} [{NODE_NAME}] {time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))}"
+        gh_due = force or status != LINK["gh_status"] or (now - LINK["gh_at"]) > LINK_GH_INTERVAL
+        done = []
+        for t in targets:
+            try:
+                if t == "db":
+                    _link_db_push(blob)
+                elif t == "api":
+                    _link_api_push(blob)
+                else:
+                    if not gh_due:
+                        continue
+                    _link_gh_push(blob, msg)
+                    LINK["gh_status"], LINK["gh_at"] = status, now
+                done.append(t)
+            except Exception as e:
+                log(f"launcher[{t}] error: {type(e).__name__}: {str(e)[:160]}")
+        if done:
+            LINK["status"], LINK["at"] = status, now
+            log(f"launcher: published '{status}' -> {','.join(done)}")
+            return True
+        return False
     except Exception as e:
         if time.time() - LINK["err_logged"] > 300:
             LINK["err_logged"] = time.time()
