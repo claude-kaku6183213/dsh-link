@@ -1,1 +1,4 @@
-{"v": 1, "alg": "AES-GCM", "it": 200000, "salt": "dsh-link-v1", "iv": "n1mu5HsGONknsp2C", "ct": "Z16bXBXMvigNSzdoPiYAs/LfBylvxGUC7mwSymx0TqmsYPmImQYGbnsgE/xuGAK4L4dVjHEmkeBFEiqjogfGjIU8do+AYYZUTu8kxvHrYlFpKyt8v1f8nmO0UI3sCg=="}
+{
+ "v": 1,
+ "note": "Placeholder. Notebook ke pehle publish ke baad ye file apne aap encrypted payload se replace ho jayegi."
+}
