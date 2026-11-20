@@ -100,6 +100,7 @@ Pages URL kholo → passphrase → **"Link aate hi khud open kar do"** on → br
 | `notebook/patch_notebooks.py` | A/B notebooks me inject karne wala script |
 | `notebook/patched/*` | Ready patched notebooks + diffs |
 | `tools/setup_github.py` | Repo create + files push + Pages enable + verify (idempotent) |
+| `tools/push_kaggle.py` | Patched notebook ko Kaggle pe push (`--dry-run` / `--wait`) — metadata preserve karta hai, RUNNING hone pe rok deta hai |
 | `tools/deploy_worker.py` | Optional Cloudflare Worker + KV deploy (pure REST, wrangler nahi chahiye) |
 | `state/current.json` | GitHub fallback ka encrypted state |
 
