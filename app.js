@@ -12,6 +12,7 @@
 
   const LS_PASS = 'dsh_link_pass';
   const LS_AUTO = 'dsh_link_autoopen';
+  const APP_V = 'v2';            // footer me dikhta hai
   const POLL_FAST_MS = 5000;      // link offline/stale (handover window) -> tez
   const POLL_LIVE_MS = 90000;     // link live hai to sirf itna (0 = polling bilkul band)
   const STALE_MS = 25 * 60 * 1000;
@@ -310,6 +311,7 @@
   $('autoopen').addEventListener('change', () => localStorage.setItem(LS_AUTO, $('autoopen').checked ? '1' : '0'));
 
   // ------------------------------------------------------------------ boot
+  if ($('ver')) $('ver').textContent = 'app ' + APP_V;
   $('autoopen').checked = localStorage.getItem(LS_AUTO) === '1';
   const saved = localStorage.getItem(LS_PASS);
   if (saved) { pass = saved; start(); } else { lock(''); }
