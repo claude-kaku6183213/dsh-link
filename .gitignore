@@ -1,8 +1,8 @@
-# local overrides (repo me mat daalo)
-config.js
+# local overrides (optional, gitignored)
+config.local.js
 # python
 __pycache__/
 *.pyc
 # generated
-notebook/patched/
+notebook/patched/*.zip
 *.zip
