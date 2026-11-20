@@ -1,4 +1,9 @@
 {
  "v": 1,
- "note": "Placeholder. Notebook ke pehle publish ke baad ye file apne aap encrypted payload se replace ho jayegi."
+ "alg": "AES-GCM",
+ "kdf": "PBKDF2-SHA256",
+ "it": 200000,
+ "salt": "dsh-link-v1",
+ "iv": "IVmdmDrMZB2D4Fb6",
+ "ct": "ZXUrk8WyZOVTCr+tz4caydEiL0iP8ZoXIvREU8cVEV2fDoFfz8HhhOmTuMkIHjujrjxZAIhoEtT1OuKcHsC7T91gBRobpGX24LL3rR0h3qA/yClyyHsk/i8LqPG4Xois60P4fLrTwwv/oHGJvOLMgHQG1f2emePHMOOQz6j4ApEeEbwzyOM627nsuVXxNftIWToWahJfVZV/P4izQmWCAvlIMEvs3+bf6IZ+aPKZ"
 }
