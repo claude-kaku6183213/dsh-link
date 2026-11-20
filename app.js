@@ -64,7 +64,7 @@
   }
 
   async function fetchOne(c) {
-    const headers = { Accept: 'application/vnd.github.raw, application/json' };
+    const headers = { Accept: c.kind === 'supabase' ? 'application/json' : 'application/vnd.github.raw, application/json' };
     if (c.kind === 'supabase') {
       const k = CFG.supabase.anon;
       headers.apikey = k;                                  // dono key types ke liye
@@ -204,19 +204,23 @@
       // Sab sources ek saath: jo sabse naya ts de, wahi jeete (CDN staleness ka ilaaj).
       const settled = await Promise.allSettled(list.map(fetchOne));
       const got = [];
+      const errs = [];
       for (let i = 0; i < settled.length; i++) {
-        if (settled[i].status !== 'fulfilled') continue;
+        const nm = list[i].kind + ':' + nice(list[i].url).slice(0, 28);
+        if (settled[i].status !== 'fulfilled') { errs.push(nm + ' -> ' + ((settled[i].reason && settled[i].reason.message) || settled[i].reason)); continue; }
         const env = settled[i].value;
-        if (!env || !env.ct) continue;
+        if (!env || !env.ct) { errs.push(nm + ' -> no ct'); continue; }
         try { got.push({ data: await decrypt(env, pass), src: nice(list[i].url) }); }
         catch (e) {
           if (e && e.name === 'OperationError') { lock('Passphrase galat lag rahi hai. Dobara try karo.'); return; }
+          errs.push(nm + ' -> decrypt ' + (e && e.name) + ' ' + (e && e.message));
         }
       }
+      const dbg = errs.length ? ' [' + errs.join(' | ') + ']' : '';
       if (!got.length) {
         const anyOk = settled.some((s) => s.status === 'fulfilled');
-        if (anyOk) waiting('Source mila par abhi tak koi link publish nahi hua. Notebook start hone pe ye page khud update ho jayega.');
-        else fail('Koi source reachable nahi (network / config check karo).');
+        if (anyOk) waiting('Source mila par abhi tak koi link publish nahi hua. Notebook start hone pe ye page khud update ho jayega.' + dbg);
+        else fail('Koi source reachable nahi (network / config check karo).' + dbg);
         return;
       }
       got.sort((a, b) => (b.data.ts || 0) - (a.data.ts || 0));
