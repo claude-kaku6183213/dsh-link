@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DSH Link</title>
+<meta name="theme-color" content="#0b1020">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ---------------------------------------------------------- gate screen -->
+<main id="gate" class="screen center hidden">
+  <div class="card gate-card">
+    <div class="logo">🔗</div>
+    <h1>DSH Link</h1>
+    <p class="muted">Launcher unlock karne ke liye passphrase daalo.<br>
+       Ye passphrase tumhare notebook ke <code>LINK_PASSPHRASE</code> secret se same hona chahiye.</p>
+    <form id="gate-form" autocomplete="off">
+      <input id="pass" type="password" placeholder="Passphrase" autocomplete="current-password" required>
+      <label class="check"><input id="remember" type="checkbox" checked> Is device pe yaad rakho</label>
+      <button type="submit" class="primary">Unlock</button>
+    </form>
+    <p id="gate-error" class="error hidden"></p>
+  </div>
+</main>
+
+<!-- ----------------------------------------------------- dashboard screen -->
+<main id="app" class="screen hidden">
+  <header>
+    <div class="brand"><span class="dot" id="dot"></span><h1>DSH Link</h1></div>
+    <button id="refresh" class="ghost" title="Refresh">⟳</button>
+  </header>
+
+  <section class="card hero">
+    <div class="status-line">
+      <span id="status-pill" class="pill">…</span>
+      <span id="node" class="muted"></span>
+    </div>
+    <div id="host" class="host">—</div>
+    <div id="updated" class="muted small">—</div>
+    <div class="actions">
+      <button id="open" class="primary big" disabled>Open Harness →</button>
+      <button id="copy" class="ghost" disabled>Copy link</button>
+    </div>
+    <label class="check"><input id="autoopen" type="checkbox"> Link aate hi khud open kar do</label>
+  </section>
+
+  <section class="card">
+    <div class="row"><span class="muted">Last update</span><span id="age">—</span></div>
+    <div class="row"><span class="muted">Node</span><span id="node2">—</span></div>
+    <div class="row"><span class="muted">Status</span><span id="status2">—</span></div>
+    <div class="row"><span class="muted">Payload</span><span id="payload-state">—</span></div>
+    <div class="row"><span class="muted">Auto-refresh</span><span>har 20s</span></div>
+  </section>
+
+  <section class="card">
+    <p class="muted small" id="hint"></p>
+    <div class="actions">
+      <button id="lock" class="ghost">Passphrase badlo</button>
+      <a id="rawlink" class="ghost" href="#" target="_blank" rel="noopener">State file dekho</a>
+    </div>
+  </section>
+
+  <footer class="muted small">DSH Link · GitHub Pages launcher · <span id="src"></span></footer>
+</main>
+
+<script src="config.js" onerror="void 0"></script>
+<script src="app.js"></script>
+</body>
+</html>
