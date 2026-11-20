@@ -53,7 +53,7 @@
     if (CFG.stateUrl) list.push({ kind: 'json', url: withCb(CFG.stateUrl, cb) });
     if (fast && CFG.supabase && CFG.supabase.anon && CFG.supabase.url) {
       const t = CFG.supabase.table || 'launch_state';
-      list.push({ kind: 'supabase', url: withCb(`${CFG.supabase.url}/rest/v1/${t}?id=eq.1&select=enc`, cb) });
+      list.push({ kind: 'supabase', url: `${CFG.supabase.url}/rest/v1/${t}?id=eq.1&select=enc` });
     }
     if (CFG.owner && CFG.repo) {
       list.push({ kind: 'raw', url: `https://raw.githubusercontent.com/${CFG.owner}/${CFG.repo}/${CFG.branch}/${CFG.path}?cb=${cb}` });
