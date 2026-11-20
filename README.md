@@ -1,125 +1,129 @@
-# DSH Link — Kaggle DSH harness ka apna launcher app
+# DSH Link — Kaggle DSH harness ka apna launcher
 
-Ek chhota **GitHub Pages PWA** jo tumhare Kaggle DSH harness ka **latest tunnel link khud dhundh leta hai**.
-Har restart/handoff ke baad naya `https://xxxx.trycloudflare.com/?token=…` link kholne ki zarurat nahi —
-phone/PC pe app icon kholo → **Open Harness** (ya auto-open on rakho). Link backend me apne aap update hota rehta hai.
+Ek chhota **GitHub Pages PWA** jo tumhare 24/7 Kaggle DSH harness ka **latest tunnel link khud dhundh leta hai**.
+Har restart/handoff ke baad naya `https://xxxx.trycloudflare.com/?token=…` link kholne ki zarurat nahi — phone pe app icon kholo → **Open Harness** (auto-open on rakho to khud khul jayega).
 
----
+```
+Kaggle notebook A/B
+   publish("online"|"handoff") / renewer() / shutdown()
+        │  AES-GCM (PBKDF2-SHA256, 200k) encrypted envelope
+        ├──────────────► Supabase table launch_state   (PRIMARY — uncached, ~0.2s)
+        ├──────────────► HTTP endpoint (Cloudflare Worker, optional)
+        └──────────────► GitHub state/current.json     (fallback — CDN 1-5 min stale)
+
+GitHub Pages PWA ── sab sources parallel me fetch + passphrase se decrypt ──► jo sabse naya ts de, wahi
+                     └─► "Open Harness" → live link
+```
 
 ## 1. Problem kya thi
+- `cloudflared` quick tunnel har restart pe **naya hostname** deta hai.
+- DSH ka launch token bhi **per-process random** hai (`processLaunchToken()` → `randomBytes`), yaani `?token=` bhi badalta hai.
+- Notebooks A/B ~9.5h pe handoff karte hain → link + token badalte hain → Telegram pe naya link aata hai → manually kholna padta hai.
 
-- `cloudflared` quick tunnel har restart pe **naya random hostname** deta hai.
-- DSH ka launch token bhi **per-process random** hai (`processLaunchToken()` → `randomBytes`), yaani URL ka `?token=` bhi har restart pe badalta hai.
-- Tumhare notebooks A/B har ~9.5h pe handoff karte hain → link + token dono badalte hain → Telegram pe naya link aata hai → wahi manually kholna padta hai.
+## 2. Kyun Supabase (aur GitHub akela kyun kaafi nahi)
+Measured (is session me, asli GitHub repo pe):
 
-## 2. Ye solution kaise kaam karta hai
+| Source | Naya link dikhne me lag | Wajah |
+|---|---|---|
+| `raw.githubusercontent.com` | **0.1s / 73s / 148s / 177s** (erratic) | CDN `?cb=` cache-buster ignore karta hai |
+| `api.github.com` (anonymous) | >150s | 60 req/hr/IP rate limit |
+| `api.github.com` (**auth**) | **0.3s** | token app me nahi rakh sakte |
+| **Supabase REST** | **~0.2s** | PostgREST dynamic hai, koi CDN cache nahi |
 
+Isliye primary source = Supabase, aur GitHub sirf fallback.
+
+## 3. Setup
+
+Repo + Pages already deploy ho chuke hain: **https://claude-kaku6183213.github.io/dsh-link/**
+
+### Step 1 — Supabase me table (ek baar)
+Notebook khud bana leta hai (SCHEMA me add hai), par turant chahiye to Supabase SQL Editor me ye chala do:
+
+```sql
+create table if not exists launch_state(
+  id int primary key, enc text, updated_at timestamptz not null default now());
+alter table launch_state enable row level security;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'grant select on launch_state to anon';
+    if not exists (select 1 from pg_policies
+                   where schemaname = 'public' and tablename = 'launch_state' and policyname = 'dsh_link_public_read') then
+      execute 'create policy dsh_link_public_read on launch_state for select to anon using (true)';
+    end if;
+  end if;
+end $$;
+notify pgrst, 'reload schema';
 ```
-Kaggle notebook A / B
-  publish("online"|"handoff")  ─┐
-  renewer()   → link_heartbeat() ├─►  AES-GCM (PBKDF2-SHA256) encrypted JSON
-  shutdown()  → "offline"      ─┘         │
-                                          ▼
-                        GitHub repo:  state/current.json      (public repo, par content encrypted)
-                                          ▲
-                                          │ raw.githubusercontent (cache-buster ke saath, har 20s)
-                        GitHub Pages PWA ─┘
-                             │ passphrase se browser me decrypt
-                             ▼
-                  "Open Harness"  →  https://xxx.trycloudflare.com/?token=…
-```
 
-- **Repo public ho sakta hai** — state file encrypted hai (AES-GCM 256, PBKDF2 200k iterations). Passphrase sirf tumhare paas: Kaggle secret + app me ek baar type.
-- App har **20 second** me state file dobara padhti hai, isliye handoff ke thodi der baad khud latest link aa jata hai.
-- Link ki value short-lived hoti hai (tunnel restart pe woh URL mar jata hai), aur passphrase badalte hi purana ciphertext useless ho jata hai.
+Ye table sirf **encrypted blob** rakhta hai (aur kuch nahi) — tumhare existing tables/data ko haath nahi lagta. `anon` role sirf ciphertext dekh sakta hai, plaintext link nahi (passphrase tumhare paas hai).
 
-## 3. Setup (5 steps, ~10 min)
+### Step 2 — `config.js`
+`config.example.js` ko `config.js` bana ke Supabase **Project URL** + **anon public key** daalo
+(Project Settings → API). Dono values public-safe hain — anon key client-side ke liye hi banti hai.
 
-> **Automated:** `GH_TOKEN=<token> python3 tools/setup_github.py` — ek hi command me repo create, 20 files push,
-> Pages enable, build wait + live URL/state file ka HTTP verify. (Token env me do, argv me nahi.)
-> Manual steps neeche diye hain — audit ya alternate ke liye.
-
-### Step 1 — Repo
-1. GitHub pe naya **public** repo banao, e.g. `dsh-link`.
-2. Is folder ki saari files us repo me push kar do (`state/current.json` placeholder ke saath).
-
-### Step 2 — GitHub Pages on karo
-Settings → **Pages** → Source: `Deploy from a branch` → Branch: **main** / **/ (root)** → Save.
-URL milega: `https://<username>.github.io/dsh-link/`
-
-### Step 3 — Kaggle Secrets add karo
-Kaggle notebook → Add-ons → Secrets. (Dono notebooks ke liye same Kaggle account, to secrets automatically available hain.)
-
+### Step 3 — Kaggle Secrets
 | Secret | Value | Zaruri? |
 |---|---|---|
-| `LINK_REPO` | `username/dsh-link` | **haan** |
-| `LINK_PAT` | fine-grained PAT — sirf usi repo pe permission **Contents: Read and write** | **haan** |
-| `LINK_PASSPHRASE` | koi bhi strong passphrase (yahi app me daalni hai) | **haan** |
-| `LINK_BRANCH` | `main` (default `main`) | optional |
-| `LINK_PATH` | `state/current.json` (default wahi) | optional |
-| `LINK_SALT` | `dsh-link-v1` (default wahi, app.js ke saath match hona chahiye) | optional |
+| `LINK_PASSPHRASE` | app me daalne wala passphrase | **haan** |
+| `LINK_DB` | `1` (default) — Supabase target on/off | optional |
+| `LINK_TABLE` | `launch_state` (default) | optional |
+| `LINK_API_URL` + `LINK_API_SECRET` | Cloudflare Worker endpoint | optional |
+| `LINK_REPO` + `LINK_PAT` | GitHub fallback (fine-grained: Contents Read+write) | optional |
 
-> PAT expire hone pe link update ruk jayega — expiry "No expiration" ya lambi rakho.
+`LINK_BRANCH` / `LINK_PATH` / `LINK_SALT` bhi optional (defaults: `main` / `state/current.json` / `dsh-link-v1`).
 
 ### Step 4 — Notebooks patch karo
 ```bash
 python3 notebook/patch_notebooks.py dsh-runner-a.ipynb dsh-runner-b.ipynb -o patched
 ```
-Ye banata hai:
-- `patched/dsh-runner-a.patched.ipynb`, `patched/dsh-runner-b.patched.ipynb` → Kaggle pe paste karke **Save & Run All** (A me `NODE_NAME="A"`, B me `"B"` — pehle jaisa hi).
-- `patched/*.diff.txt` → exactly kya badla, review ke liye (+120 lines, koi existing line delete nahi hoti).
+- `patched/*.patched.ipynb` → Kaggle pe paste + **Save & Run All** (A me `NODE_NAME="A"`, B me `"B"`).
+- `patched/*.diff.txt` → kya badla (source me +192 lines, koi line delete nahi hoti).
 
-Patch kya karta hai (4 chhote hooks):
-1. `publish(status)` → `publish_remote(status)` — naya link publish.
-2. `renewer()` heartbeat → `link_heartbeat()` — har ~8 min me timestamp refresh (isliye app "stale" nahi dikhata).
-3. `shutdown()` → `publish_remote("offline", force=True)` — band hone pe offline mark.
-4. `INJECT_KEYS` me `LINK_*` add — taaki peer notebook (B) ko bhi secrets mil jayein.
+Patch karta hai:
+1. `publish(status)` → `publish_remote(status)`
+2. `renewer()` heartbeat → `link_heartbeat()` (har ~8 min refresh, isliye app stale nahi dikhata)
+3. `shutdown()` → `publish_remote("offline", force=True)` (peer ne lease le li ho to skip)
+4. `SCHEMA` me `launch_state` table + anon read policy
+5. `INJECT_KEYS` me `LINK_*` (peer notebook ko bhi secrets mil jayein)
 
-Manual chaho to: `notebook/dsh_link_cell.py` ka poora block `def main():` se pehle paste karo, aur upar wale 4 hooks haath se laga do.
-
-### Step 5 — Phone/PC pe install
-Pages URL kholo → passphrase daalo → **"Link aate hi khud open kar do"** on karo → browser menu → **Add to Home Screen**.
-Bas: icon kholo, link khud aata hai, tap karo (ya auto-open).
-
----
+### Step 5 — Phone pe install
+Pages URL kholo → passphrase → **"Link aate hi khud open kar do"** on → browser menu → **Add to Home Screen**.
 
 ## 4. Files
-
 | File | Kaam |
 |---|---|
-| `index.html`, `style.css`, `app.js` | Launcher PWA (passphrase gate + status + Open/Copy + auto-open + 20s poll) |
-| `sw.js`, `manifest.webmanifest`, `icon-*` | PWA install support + icons |
-| `notebook/dsh_link_cell.py` | Notebook me jaane wala publisher block (AES-GCM encrypt + GitHub Contents API write) |
-| `notebook/patch_notebooks.py` | A/B notebooks me automatically inject karne wala script |
+| `index.html`, `style.css`, `app.js` | Launcher PWA (passphrase gate, multi-source fetch, freshest-ts jeete, auto-open, 20s poll) |
+| `sw.js`, `manifest.webmanifest`, `icon-*` | PWA install support |
+| `config.js` / `config.example.js` | Supabase URL + anon key (public values) |
+| `notebook/dsh_link_cell.py` | Publisher: AES-GCM encrypt + Supabase/Worker/GitHub targets |
+| `notebook/patch_notebooks.py` | A/B notebooks me inject karne wala script |
 | `notebook/patched/*` | Ready patched notebooks + diffs |
-| `state/current.json` | Live link ka encrypted state (notebook likhta hai, app padhti hai) |
-| `config.example.js` | Sirf local test / custom domain / custom backend ke liye (`config.js` gitignored hai) |
+| `tools/setup_github.py` | Repo create + files push + Pages enable + verify (idempotent) |
+| `tools/deploy_worker.py` | Optional Cloudflare Worker + KV deploy (pure REST, wrangler nahi chahiye) |
+| `state/current.json` | GitHub fallback ka encrypted state |
 
-## 5. Is session me kya verify kiya gaya
-
+## 5. Verification (is session me chalaya gaya)
 | Test | Result |
 |---|---|
-| Python `AESGCM`+`PBKDF2` envelope → browser **WebCrypto** decrypt (round trip) | ✅ |
-| Galat passphrase reject (browser) | ✅ `OperationError` |
-| `publish_remote()` vs **mock GitHub API**: write, 409-conflict retry, 8-min throttle, force, offline | ✅ |
-| Handoff guard: peer ne lease le liya → purana node naya link overwrite nahi karta | ✅ |
-| Playwright + chromium: online / wrong-pass / offline / stale / placeholder / file-missing | ✅ (6/6 states) |
-| Patched notebooks `compile()` clean, A aur B ka big cell bilkul identical | ✅ |
-| Full loop: Python publisher → GitHub file → browser launcher me URL resolve | ✅ |
+| Publisher: db + worker + github teeno targets, upsert SQL, offline payload, 8-min throttle, handoff guard | **16/16 ✅** |
+| App multi-source: Supabase fresh jeete / GitHub fallback / table-missing fallback / Waiting | **4/4 ✅** (Playwright + Chromium) |
+| Python AES-GCM → browser WebCrypto decrypt (round trip, galat passphrase reject) | ✅ |
+| Live GitHub infra: publisher → repo → Pages app URL resolve | ✅ |
+| CDN staleness measurement (raw vs api anon vs api auth) | ✅ (table upar) |
+| Patched notebooks compile clean, A/B big-cell identical | ✅ |
 
 ## 6. Troubleshooting
-
 | Symptom | Fix |
 |---|---|
-| App "Waiting" pe atki hai | Notebook logs me `launcher: LINK_REPO/LINK_PAT/LINK_PASSPHRASE secrets missing` dekho → Step 3 ke secrets add karo, notebook restart karo |
-| "Passphrase galat lag rahi hai" | Notebook ka `LINK_PASSPHRASE` == app ka passphrase. `LINK_SALT` bhi dono taraf same ho |
-| GitHub 401/403 (notebook log me) | PAT ka permission `Contents: Read and write` (usi repo pe) aur expiry check karo |
-| 404 on state file | `LINK_BRANCH`/`LINK_PATH` galat hain, ya notebook ne abhi publish nahi kiya |
-| "Stale (>25 min)" | Harness crash/restart me hai; next publish pe app khud theek ho jayega |
-| Pages pe purani file dikhe | App cache-buster lagati hai; phir bhi aaye to hard refresh (Ctrl+Shift+R) |
+| App "Waiting" | Notebook logs me `launcher: koi target configured nahi` ya `launcher[db] error` dekho; Kaggle secrets + table check karo |
+| Supabase 404 / `42P01` | Step 1 ka SQL chalao (ya notebook ek baar restart karo), phir `notify pgrst, 'reload schema';` |
+| 401 `no apikey` | `config.js` me anon key galat/khaali |
+| "Passphrase galat lag rahi hai" | Notebook ka `LINK_PASSPHRASE` == app ka passphrase; `LINK_SALT` bhi same ho |
+| Link 1-3 min purana | GitHub raw path use ho raha hai — Supabase config check karo |
+| "Stale (>25 min)" | Harness crash/restart me hai; next publish pe theek ho jayega |
 
-## 7. Optional upgrades (bolo to bana du)
-
-1. **Permanent URL proxy (Cloudflare Worker + KV)** — notebook KV me current origin+token likhe aur Worker poora traffic (WebSocket included) proxy kare. Browser ko hamesha `https://dsh-link.<sub>.workers.dev/` hi dikhta hai, cookie bhi persist karta hai — is case me PWA ki zarurat bhi nahi, ek bookmark kaafi.
-2. **Root fix: fixed hostname** — Cloudflare **Named Tunnel** + sasta domain (`dsh.tumharadomain.com`) ya **Tailscale Funnel** (`node.tailnet.ts.net`, free, fixed hostname). DSH ka cookie-signing secret `dsh_home` me persist hota hai (jo tum already DB me backup karte ho) aur cookie host-based hoti hai — matlab ek baar login ke baad `https://fixed-host/` **hamesha** chalega, token ki bhi zarurat nahi. Ye sabse saaf solution hai; launcher app optional ho jaati hai.
-3. **Telegram bot `/link`** — tumhare paas TG bot already hai; usi me current link command add ho sakta hai.
+## 7. Optional upgrades
+1. **Fixed URL proxy (Cloudflare Worker + KV)** — browser ko hamesha ek hi URL dikhe (WebSocket bhi proxy), cookie persist kare → phir PWA ki zarurat bhi nahi. `tools/deploy_worker.py` ready hai.
+2. **Permanent hostname** — Cloudflare Named Tunnel + domain ya Tailscale Funnel (`*.ts.net`, free). DSH ka cookie-signing secret `dsh_home` me persist hota hai (jo DB me backup hota hai) aur cookie host-based hai → ek baar login ke baad bookmark hamesha chalega.
+3. **Android APK** — chaaho to yahi launcher Capacitor se APK me package ho sakta hai (main bana dunga).
