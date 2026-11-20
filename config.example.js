@@ -5,7 +5,7 @@ window.DSH_LINK_CONFIG = {
   // Supabase dashboard → Project Settings → API → "Project URL" + "anon public" key
   supabase: {
     url: 'https://XXXXXXXXXXXX.supabase.co',
-    anon: 'eyJhbGciOi...',            // anon public key (client me rakhne ke liye hi bani hai)
+    anon: 'eyJhbGciOi...',            // Legacy 'anon public' (ya naya 'sb_publishable_...') -- dono chalte hain
     table: 'launch_state',            // default
   },
 
