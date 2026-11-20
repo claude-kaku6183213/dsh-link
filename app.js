@@ -1,6 +1,12 @@
-/* DSH Link — GitHub Pages launcher for a handoff-driven DSH harness.
- * State file = AES-GCM encrypted JSON, written by the Kaggle notebook.
- * Nothing secret is stored in this repo. */
+/* DSH Link — launcher for a handoff-driven DSH harness.
+ *
+ * Sources (jitne configured honge, sabse fresh payload jeetega):
+ *   1. Supabase REST (recommended, uncached)  CFG.supabase = {url, anon, table}
+ *   2. HTTP endpoint (Cloudflare Worker)      CFG.stateUrl
+ *   3. GitHub raw (fallback, CDN 1-5 min stale)
+ *
+ * State file = AES-GCM encrypted JSON, likhta notebook hai. Yahan koi secret nahi.
+ */
 (() => {
   'use strict';
 
@@ -11,50 +17,65 @@
 
   // ---------------------------------------------------------------- config
   const auto = (() => {
-    const c = { owner: '', repo: '', branch: 'main', path: 'state/current.json', salt: 'dsh-link-v1', stateUrl: '' };
+    const c = {
+      owner: '', repo: '', branch: 'main', path: 'state/current.json',
+      salt: 'dsh-link-v1', stateUrl: '', supabase: null,
+    };
     if (location.hostname.endsWith('.github.io')) {
       c.owner = location.hostname.split('.')[0];
-      const seg = location.pathname.split('/').filter(Boolean);
-      c.repo = seg[0] || '';
+      c.repo = (location.pathname.split('/').filter(Boolean)[0] || '');
     }
     return c;
   })();
   const CFG = Object.assign(auto, window.DSH_LINK_CONFIG || {});
+  if (!CFG.supabase) delete CFG.supabase;
 
   const $ = (id) => document.getElementById(id);
   const b64ToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
   const ageText = (s) => (s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago');
+  const withCb = (url, cb) => url + (url.includes('?') ? '&' : '?') + 'cb=' + cb;
+  const nice = (url) => url.split('?')[0].replace('https://', '');
 
   let pass = '';
   let timer = null;
   let lastOpened = null;
   let countdownTimer = null;
 
-  // ------------------------------------------------------------ state fetch
+  // ------------------------------------------------------------ candidates
   function candidates() {
-    if (CFG.stateUrl) return [CFG.stateUrl];
     const cb = Date.now();
-    const out = [];
-    if (CFG.owner && CFG.repo) {
-      out.push(`https://raw.githubusercontent.com/${CFG.owner}/${CFG.repo}/${CFG.branch}/${CFG.path}?cb=${cb}`);
-      out.push(`https://api.github.com/repos/${CFG.owner}/${CFG.repo}/contents/${CFG.path}?ref=${CFG.branch}&cb=${cb}`);
+    const list = [];
+    const fast = !!(CFG.stateUrl || (CFG.supabase && CFG.supabase.anon && CFG.supabase.url));
+    if (CFG.stateUrl) list.push({ kind: 'json', url: withCb(CFG.stateUrl, cb) });
+    if (fast && CFG.supabase && CFG.supabase.anon && CFG.supabase.url) {
+      const t = CFG.supabase.table || 'launch_state';
+      list.push({ kind: 'supabase', url: withCb(`${CFG.supabase.url}/rest/v1/${t}?id=eq.1&select=enc`, cb) });
     }
-    out.push(`./${CFG.path}?cb=${cb}`);            // same-origin (Pages) fallback
-    return out;
+    if (CFG.owner && CFG.repo) {
+      list.push({ kind: 'raw', url: `https://raw.githubusercontent.com/${CFG.owner}/${CFG.repo}/${CFG.branch}/${CFG.path}?cb=${cb}` });
+      if (!fast) list.push({ kind: 'raw', url: `https://api.github.com/repos/${CFG.owner}/${CFG.repo}/contents/${CFG.path}?ref=${CFG.branch}&cb=${cb}` });
+    }
+    list.push({ kind: 'raw', url: withCb(`./${CFG.path}`, cb) });
+    return { list, parallel: fast };
   }
 
-  async function fetchState() {
-    let lastErr = null;
-    for (const url of candidates()) {
-      try {
-        const r = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/vnd.github.raw, application/json' } });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const text = (await r.text()).trim();
-        if (!text) throw new Error('empty payload');
-        return { json: JSON.parse(text), from: url.split('?')[0] };
-      } catch (e) { lastErr = e; }
+  async function fetchOne(c) {
+    const headers = { Accept: 'application/vnd.github.raw, application/json' };
+    if (c.kind === 'supabase') {
+      headers.apikey = CFG.supabase.anon;
+      headers.Authorization = 'Bearer ' + CFG.supabase.anon;
     }
-    throw lastErr || new Error('state file not reachable');
+    const r = await fetch(c.url, { cache: 'no-store', headers });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const text = (await r.text()).trim();
+    if (!text) throw new Error('empty payload');
+    let obj = JSON.parse(text);
+    if (c.kind === 'supabase') {
+      if (!Array.isArray(obj) || !obj.length) throw new Error('no row in launch_state');
+      if (!obj[0].enc) throw new Error('enc column khaali');
+      obj = JSON.parse(obj[0].enc);
+    }
+    return obj;
   }
 
   // -------------------------------------------------------------- decrypt
@@ -92,7 +113,7 @@
     const url = data.url || '';
     const live = !!url && !stale && (status === 'online' || status === 'handoff' || status === 'starting');
 
-    setPill(stale && status !== 'offline' ? 'stale' : status);
+    setPill(status);
     if (stale && status !== 'offline') {
       $('status-pill').textContent = 'Stale';
       $('status-pill').className = 'pill warn';
@@ -112,17 +133,15 @@
     $('open').disabled = !live;
     $('copy').disabled = !live;
     $('open').dataset.url = live ? url : '';
-    $('rawlink').href = src || '#';
+    $('rawlink').href = src ? 'https://' + src : '#';
 
     $('hint').textContent = live
-      ? 'Link har restart pe badalta hai — ye page khud latest link laata hai, isliye bookmark/PWA hamesha kaam karega.'
+      ? 'Link har restart pe badalta hai — ye page hamesha latest link laata hai, isliye bookmark/PWA kaam karega.'
       : stale && status !== 'offline'
         ? 'State purana hai (>25 min). Harness shayad restart ho raha hai — thodi der me refresh karo.'
         : 'Harness abhi offline hai ya notebook start ho raha hai. Link aate hi ye page khud update ho jayega.';
 
-    if (live && $('autoopen').checked && lastOpened !== url) {
-      startCountdown(url);
-    }
+    if (live && $('autoopen').checked && lastOpened !== url) startCountdown(url);
   }
 
   function startCountdown(url) {
@@ -153,7 +172,6 @@
   }
 
   function waiting(msg) {
-    setPill('waiting');
     $('status-pill').textContent = 'Waiting';
     $('status-pill').className = 'pill warn';
     $('dot').className = 'dot warn';
@@ -168,21 +186,50 @@
 
   // ----------------------------------------------------------------- flow
   async function refresh() {
-    try {
-      const { json, from } = await fetchState();
-      if (!json || !json.ct) { waiting('Abhi tak koi link publish nahi hua. Notebook start hone pe ye page khud update ho jayega.'); return; }
-      const data = await decrypt(json, pass);
-      render(data, from.replace('https://', ''));
-    } catch (e) {
-      const msg = String((e && e.message) || e);
-      if (e && (e.name === 'OperationError' || msg.includes('OperationError'))) {
-        lock('Passphrase galat lag rahi hai. Dobara try karo.');
+    const { list, parallel } = candidates();
+
+    if (parallel) {
+      // Sab sources ek saath: jo sabse naya ts de, wahi jeete (CDN staleness ka ilaaj).
+      const settled = await Promise.allSettled(list.map(fetchOne));
+      const got = [];
+      for (let i = 0; i < settled.length; i++) {
+        if (settled[i].status !== 'fulfilled') continue;
+        const env = settled[i].value;
+        if (!env || !env.ct) continue;
+        try { got.push({ data: await decrypt(env, pass), src: nice(list[i].url) }); }
+        catch (e) {
+          if (e && e.name === 'OperationError') { lock('Passphrase galat lag rahi hai. Dobara try karo.'); return; }
+        }
+      }
+      if (!got.length) {
+        const anyOk = settled.some((s) => s.status === 'fulfilled');
+        if (anyOk) waiting('Source mila par abhi tak koi link publish nahi hua. Notebook start hone pe ye page khud update ho jayega.');
+        else fail('Koi source reachable nahi (network / config check karo).');
         return;
       }
-      if (msg.includes('404') || msg.includes('empty payload') || msg.includes('not reachable') || msg.includes('Failed to fetch')) {
-        waiting('State file abhi nahi mili — notebook ke first publish ka intezaar hai (har 20s pe retry hota hai).');
+      got.sort((a, b) => (b.data.ts || 0) - (a.data.ts || 0));
+      render(got[0].data, got[0].src);
+      return;
+    }
+
+    // GitHub-only mode: pehla successful source jeete.
+    let lastErr = null;
+    for (const c of list) {
+      try {
+        const env = await fetchOne(c);
+        if (!env || !env.ct) { waiting('Abhi tak koi link publish nahi hua. Notebook start hone pe ye page khud update ho jayega.'); return; }
+        const data = await decrypt(env, pass);
+        render(data, nice(c.url));
         return;
+      } catch (e) {
+        if (e && e.name === 'OperationError') { lock('Passphrase galat lag rahi hai. Dobara try karo.'); return; }
+        lastErr = e;
       }
+    }
+    const msg = String((lastErr && lastErr.message) || lastErr || '');
+    if (msg.includes('404') || msg.includes('empty payload') || msg.includes('no row')) {
+      waiting('State abhi available nahi — notebook ke first publish ka intezaar hai (har 20s retry hota hai).');
+    } else {
       fail('State file nahi mili / decrypt nahi hui: ' + msg);
     }
   }
@@ -214,10 +261,9 @@
     $('gate-error').classList.add('hidden');
     pass = p;
     try {
-      // State file abhi na ho ya khaali ho to bhi unlock karne do: app "waiting" dikhayega.
-      let json = null;
-      try { json = (await fetchState()).json; } catch { json = null; }
-      if (json && json.ct) await decrypt(json, pass);   // validate before storing
+      let env = null;
+      try { env = await fetchOne(candidates().list[0]); } catch { env = null; }
+      if (env && env.ct) await decrypt(env, pass);        // validate before storing
       if ($('remember').checked) localStorage.setItem(LS_PASS, pass);
       else localStorage.removeItem(LS_PASS);
       start();
