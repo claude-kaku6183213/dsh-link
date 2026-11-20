@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BRANCH = "main"
 
 SKIP_DIRS = {".git", "__pycache__", ".github"}
-SKIP_FILES = {"config.js"}
+SKIP_FILES = {"config.local.js"}          # config.js public-safe hai, isliye push hoti hai
 SKIP_SUFFIX = {".zip", ".pyc"}
 
 
