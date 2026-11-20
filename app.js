@@ -12,8 +12,8 @@
 
   const LS_PASS = 'dsh_link_pass';
   const LS_AUTO = 'dsh_link_autoopen';
-  const POLL_MS = 20000;          // normal refresh
-  const POLL_FAST_MS = 5000;      // jab link offline/stale ho (handover window) -> tez
+  const POLL_FAST_MS = 5000;      // link offline/stale (handover window) -> tez
+  const POLL_LIVE_MS = 90000;     // link live hai to sirf itna (0 = polling bilkul band)
   const STALE_MS = 25 * 60 * 1000;
 
   // ---------------------------------------------------------------- config
@@ -247,7 +247,10 @@
     ticking = true;
     try { await refresh(); } finally { ticking = false; }
     clearTimeout(timer);
-    timer = setTimeout(tick, liveNow ? (CFG.pollMs || POLL_MS) : (CFG.fastPollMs || POLL_FAST_MS));
+    const ms = liveNow
+      ? (CFG.livePollMs !== undefined ? CFG.livePollMs : POLL_LIVE_MS)
+      : (CFG.fastPollMs !== undefined ? CFG.fastPollMs : POLL_FAST_MS);
+    if (ms > 0) timer = setTimeout(tick, ms);      // 0 = live hone pe polling band
   }
 
   function start() {
