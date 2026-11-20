@@ -62,8 +62,10 @@
   async function fetchOne(c) {
     const headers = { Accept: 'application/vnd.github.raw, application/json' };
     if (c.kind === 'supabase') {
-      headers.apikey = CFG.supabase.anon;
-      headers.Authorization = 'Bearer ' + CFG.supabase.anon;
+      const k = CFG.supabase.anon;
+      headers.apikey = k;                                  // dono key types ke liye
+      if (k.startsWith('eyJ')) headers.Authorization = 'Bearer ' + k;   // legacy anon JWT
+      // naye sb_publishable_... keys sirf apikey header se chalti hain
     }
     const r = await fetch(c.url, { cache: 'no-store', headers });
     if (!r.ok) throw new Error('HTTP ' + r.status);
