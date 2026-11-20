@@ -340,7 +340,7 @@
   }, { passive: true });
 
   // ------------------------------------------------------------------ boot
-  if ($('ver')) $('ver').textContent = 'app ' + APP_V;
+  if ($('ver')) $('ver').textContent = 'app ' + APP_V + (CFG.supabase && CFG.supabase.anon ? ' \u00b7 supa \u2713' : ' \u00b7 supa \u2717 (config.js cache!)');
   $('autoopen').checked = localStorage.getItem(LS_AUTO) === '1';
   const saved = localStorage.getItem(LS_PASS);
   if (saved) { pass = saved; start(); } else { lock(''); }
