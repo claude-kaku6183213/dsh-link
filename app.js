@@ -12,7 +12,8 @@
 
   const LS_PASS = 'dsh_link_pass';
   const LS_AUTO = 'dsh_link_autoopen';
-  const POLL_MS = 20000;
+  const POLL_MS = 20000;          // normal refresh
+  const POLL_FAST_MS = 5000;      // jab link offline/stale ho (handover window) -> tez
   const STALE_MS = 25 * 60 * 1000;
 
   // ---------------------------------------------------------------- config
@@ -40,6 +41,8 @@
   let timer = null;
   let lastOpened = null;
   let countdownTimer = null;
+  let liveNow = false;            // abhi link live hai? (poll interval decide karta hai)
+  let ticking = false;
 
   // ------------------------------------------------------------ candidates
   function candidates() {
@@ -132,6 +135,7 @@
     $('payload-state').textContent = src || '—';
     $('src').textContent = src || '';
 
+    liveNow = live;
     $('open').disabled = !live;
     $('copy').disabled = !live;
     $('open').dataset.url = live ? url : '';
@@ -164,6 +168,7 @@
   }
 
   function fail(msg) {
+    liveNow = false;
     setPill('offline');
     $('host').textContent = 'Data nahi mila';
     $('hint').textContent = msg;
@@ -174,6 +179,7 @@
   }
 
   function waiting(msg) {
+    liveNow = false;
     $('status-pill').textContent = 'Waiting';
     $('status-pill').className = 'pill warn';
     $('dot').className = 'dot warn';
@@ -236,17 +242,24 @@
     }
   }
 
+  async function tick() {
+    if (ticking) return;
+    ticking = true;
+    try { await refresh(); } finally { ticking = false; }
+    clearTimeout(timer);
+    timer = setTimeout(tick, liveNow ? (CFG.pollMs || POLL_MS) : (CFG.fastPollMs || POLL_FAST_MS));
+  }
+
   function start() {
     $('gate').classList.add('hidden');
     $('app').classList.remove('hidden');
     lastOpened = null;
-    refresh();
-    clearInterval(timer);
-    timer = setInterval(refresh, POLL_MS);
+    clearTimeout(timer);
+    tick();
   }
 
   function lock(msg) {
-    clearInterval(timer);
+    clearTimeout(timer);
     clearInterval(countdownTimer);
     $('app').classList.add('hidden');
     $('gate').classList.remove('hidden');
@@ -286,7 +299,10 @@
     catch { prompt('Link copy karo:', u); }
     setTimeout(() => ($('copy').textContent = 'Copy link'), 1500);
   });
-  $('refresh').addEventListener('click', refresh);
+  $('refresh').addEventListener('click', tick);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && pass) tick();      // app kholte hi turant refresh
+  });
   $('lock').addEventListener('click', () => { localStorage.removeItem(LS_PASS); lock(''); });
   $('autoopen').addEventListener('change', () => localStorage.setItem(LS_AUTO, $('autoopen').checked ? '1' : '0'));
 
