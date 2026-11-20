@@ -87,6 +87,17 @@ Patch karta hai:
 4. `SCHEMA` me `launch_state` table + anon read policy
 5. `INJECT_KEYS` me `LINK_*` (peer notebook ko bhi secrets mil jayein)
 
+### Step 4b — Kaggle me deploy karne ke 2 tarike
+1. **Bootstrap cell (recommended)** — `notebook/dsh-runner-a-bootstrap.ipynb` / `dsh-runner-b-bootstrap.ipynb`
+   import karo (ya `notebook/bootstrap-cell-a.txt` / `-b.txt` ka content ek hi cell me paste karo).
+   Ye har start pe **latest code GitHub se** uthata hai → aage kabhi Kaggle edit karne ki zarurat nahi.
+2. **Poora patched notebook** — `notebook/patched/*.patched.ipynb` import/paste karo.
+
+Zaroori baatein (inhi se handoff chalta hai):
+- Kaggle notebook ka **slug exactly** `dsh-runner-a` / `dsh-runner-b` hona chahiye. Notebook **rename** karne se slug badal jata hai → peer push fail hoga.
+- **API se push kiye gaye version ko Kaggle Secrets nahi milte** (secrets UI-level hote hain). Isliye deploy **UI se** karo (*Save & Run All*), ya peer-push karao (wo secrets inject karta hai).
+- Har notebook me `LINK_PASSPHRASE` secret **attach** hona chahiye (Add-ons → Secrets).
+
 ### Step 5 — Phone pe install
 Pages URL kholo → passphrase → **"Link aate hi khud open kar do"** on → browser menu → **Add to Home Screen**.
 
