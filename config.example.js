@@ -21,7 +21,7 @@ window.DSH_LINK_CONFIG = {
 
   // Poll timing (optional): waiting/offline me fast, live hone pe normal
   // fastPollMs: 5000,    // link offline/stale (handover window)
-  // livePollMs: 90000,   // link live hai to (0 = polling bilkul band)
+  // livePollMs: 0,       // link live hone pe polling BAND (default 0)
 
   salt: 'dsh-link-v1',                // notebook ke LINK_SALT se match karna chahiye
 };
