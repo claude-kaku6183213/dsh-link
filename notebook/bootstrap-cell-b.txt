@@ -1,0 +1,10 @@
+# === DSH LINK BOOTSTRAP — Kaggle me sirf YE ek cell rakho (baaki code GitHub se khud aata hai) ===
+SLUG = "dsh-runner-b"
+
+URL = f"https://raw.githubusercontent.com/claude-kaku6183213/dsh-link/main/notebook/patched/{SLUG}.patched.ipynb"
+
+import json as _json, urllib.request as _url
+_nb = _json.loads(_url.urlopen(URL, timeout=60).read())
+for _c in _nb["cells"]:
+    _src = "".join(_c["source"]) if isinstance(_c["source"], list) else _c["source"]
+    exec(compile(_src, f"{SLUG}:{_c.get('id', 'cell')}", "exec"), globals())
