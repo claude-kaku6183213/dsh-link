@@ -19,5 +19,8 @@ window.DSH_LINK_CONFIG = {
   // --- Optional: Cloudflare Worker endpoint (agar LINK_API_URL use kar rahe ho) ---
   // stateUrl: 'https://dsh-link.xxx.workers.dev/state',
 
+  // Poll timing (optional): waiting/offline me fast, live hone pe normal
+  // pollMs: 20000, fastPollMs: 5000,
+
   salt: 'dsh-link-v1',                // notebook ke LINK_SALT se match karna chahiye
 };
