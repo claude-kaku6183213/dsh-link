@@ -1,6 +1,6 @@
 /* Service worker: network-first (hamesha fresh code), cache sirf offline fallback ke liye.
    Pehle cache-first tha -> ek baar 404 cache ho gaya to app hamesha purani rehti thi. */
-const CACHE = 'dsh-link-shell-v5';
+const CACHE = 'dsh-link-shell-v6';
 const SHELL = ['./', './index.html', './style.css', './app.js', './config.js', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (e) => {
