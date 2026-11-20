@@ -1,5 +1,5 @@
 /* Minimal offline shell cache. Never caches the live state file. */
-const CACHE = 'dsh-link-shell-v1';
+const CACHE = 'dsh-link-shell-v2';
 const SHELL = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (e) => {
