@@ -14,7 +14,7 @@
   const LS_AUTO = 'dsh_link_autoopen';
   const APP_V = 'v2';            // footer me dikhta hai
   const POLL_FAST_MS = 5000;      // link offline/stale (handover window) -> tez
-  const POLL_LIVE_MS = 90000;     // link live hai to sirf itna (0 = polling bilkul band)
+  const POLL_LIVE_MS = 0;         // live hone pe polling BAND (0); offline pe 5s chalti hai
   const STALE_MS = 25 * 60 * 1000;
 
   // ---------------------------------------------------------------- config
@@ -137,6 +137,7 @@
     $('src').textContent = src || '';
 
     liveNow = live;
+    if (live) $('refresh').classList.add('hidden'); else $('refresh').classList.remove('hidden');
     $('open').disabled = !live;
     $('copy').disabled = !live;
     $('open').dataset.url = live ? url : '';
@@ -170,6 +171,7 @@
 
   function fail(msg) {
     liveNow = false;
+    $('refresh').classList.remove('hidden');
     setPill('offline');
     $('host').textContent = 'Data nahi mila';
     $('hint').textContent = msg;
@@ -181,6 +183,7 @@
 
   function waiting(msg) {
     liveNow = false;
+    $('refresh').classList.remove('hidden');
     $('status-pill').textContent = 'Waiting';
     $('status-pill').className = 'pill warn';
     $('dot').className = 'dot warn';
@@ -309,6 +312,32 @@
   });
   $('lock').addEventListener('click', () => { localStorage.removeItem(LS_PASS); lock(''); });
   $('autoopen').addEventListener('change', () => localStorage.setItem(LS_AUTO, $('autoopen').checked ? '1' : '0'));
+
+  // ------------------------------------------------- pull-to-refresh (niche swipe karo)
+  // Standalone PWA me browser ka apna pull-to-refresh kaam nahi karta, isliye apna.
+  const pullEl = document.createElement('div');
+  pullEl.id = 'pullind';
+  pullEl.textContent = '\u2193 refresh ke liye kheencho';
+  if (document.body && document.body.appendChild) document.body.appendChild(pullEl);
+  let pullStart = null, pullDy = 0;
+  window.addEventListener('touchstart', (e) => { pullStart = (window.scrollY <= 0) ? e.touches[0].clientY : null; pullDy = 0; }, { passive: true });
+  window.addEventListener('touchmove', (e) => {
+    if (pullStart === null) return;
+    pullDy = e.touches[0].clientY - pullStart;
+    if (pullDy > 20) {
+      pullEl.classList.add('on');
+      pullEl.textContent = pullDy > 70 ? '\u2191 chhodo refresh ke liye' : '\u2193 kheencho refresh ke liye';
+    }
+  }, { passive: true });
+  window.addEventListener('touchend', () => {
+    if (pullStart !== null && pullDy > 70) {
+      pullEl.textContent = '\u21bb refresh ho raha hai\u2026';
+      tick().then(() => { pullEl.textContent = '\u2713 ho gaya'; setTimeout(() => pullEl.classList.remove('on'), 700); });
+    } else if (pullStart !== null) {
+      pullEl.classList.remove('on');
+    }
+    pullStart = null; pullDy = 0;
+  }, { passive: true });
 
   // ------------------------------------------------------------------ boot
   if ($('ver')) $('ver').textContent = 'app ' + APP_V;
