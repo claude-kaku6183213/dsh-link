@@ -30,7 +30,29 @@ ANCHOR_RENEW = '''            db("update runtime_info set heartbeat_at = now() w
 
 NEW_KEYS = ('INJECT_KEYS = ["DATABASE_URL", "KAGGLE_USERNAME", "KAGGLE_KEY", "BACKUP_PASSPHRASE", "TG_TOKEN", "TG_CHAT_ID",\n'
             '               "DSH_VERSION", "HANDOFF_AFTER_H", "HARD_EXIT_H", "MAX_BACKUP_MB",\n'
-            '               "LINK_REPO", "LINK_PAT", "LINK_PASSPHRASE", "LINK_BRANCH", "LINK_PATH", "LINK_SALT"]')
+            '               "LINK_PASSPHRASE", "LINK_DB", "LINK_TABLE", "LINK_API_URL", "LINK_API_SECRET",\n'
+            '               "LINK_REPO", "LINK_PAT", "LINK_BRANCH", "LINK_PATH", "LINK_SALT"]')
+
+# Supabase/Postgres: encrypted link state ke liye alag chhota table + anon read policy.
+# Existing tables ko haath nahi lagta; anon sirf ciphertext dekh sakta hai.
+SCHEMA_ANCHOR = 'alter table harness_backup enable row level security;\n"""'
+SCHEMA_ADD = '''alter table harness_backup enable row level security;
+
+create table if not exists launch_state(
+  id int primary key, enc text, updated_at timestamptz not null default now());
+alter table launch_state enable row level security;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'grant select on launch_state to anon';
+    if not exists (select 1 from pg_policies
+                   where schemaname = 'public' and tablename = 'launch_state' and policyname = 'dsh_link_public_read') then
+      execute 'create policy dsh_link_public_read on launch_state for select to anon using (true)';
+    end if;
+  end if;
+end $$;
+notify pgrst, 'reload schema';
+"""'''
 
 
 def cell_text(cell):
@@ -73,6 +95,11 @@ def patch_source(text):
         missing.append("def main()")
     else:
         text = text.replace("def main():", HELPER + "\n\ndef main():", 1)
+
+    if SCHEMA_ANCHOR not in text:
+        missing.append("SCHEMA (launch_state table)")
+    else:
+        text = text.replace(SCHEMA_ANCHOR, SCHEMA_ADD, 1)
 
     return text, missing
 
