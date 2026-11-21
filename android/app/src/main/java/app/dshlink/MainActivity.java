@@ -127,10 +127,10 @@ public class MainActivity extends Activity {
         hintTv.setGravity(Gravity.CENTER);
         hintTv.setPadding(0, dp(12), 0, dp(20));
         Button pass = new Button(this);
-        pass.setText("Passphrase badlo");
+        pass.setText("Change passphrase");
         pass.setOnClickListener(v -> askPassphrase(false));
         Button retry = new Button(this);
-        retry.setText("Abhi check karo");
+        retry.setText("Check now");
         retry.setOnClickListener(v -> pollNow());
         box.addView(titleTv);
         box.addView(hintTv);
@@ -139,7 +139,14 @@ public class MainActivity extends Activity {
         overlay = box;
         root.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
-        showWaiting("Link ka intezaar…", "Latest link dhundh raha hoon");
+        web.setBackgroundColor(0xFF0B1020);
+        loadKeyCache();
+        String cached = sp.getString("last_url", null);
+        if (sp.getString("pass", null) != null && cached != null) {
+            loadHarness(cached, true);   // direct open; fresh link is checked in the background
+        } else {
+            showWaiting("Waiting for link…", "Looking for the latest link");
+        }
     }
 
     private int dp(int v) {
@@ -193,7 +200,7 @@ public class MainActivity extends Activity {
         et.setHint("LINK_PASSPHRASE");
         AlertDialog.Builder bd = new AlertDialog.Builder(this)
                 .setTitle("Passphrase")
-                .setMessage("Notebook ke LINK_PASSPHRASE wali passphrase daalo.")
+                .setMessage("Enter the notebook's LINK_PASSPHRASE.")
                 .setView(et)
                 .setCancelable(!first)
                 .setPositiveButton("Save", (d, w) -> {
@@ -203,6 +210,7 @@ public class MainActivity extends Activity {
                         sp.edit().putString("pass", v).apply();
                         cachedKey = null;
                         cachedKeyId = "";
+                        sp.edit().remove("key").remove("key_id").apply();
                         pollNow();
                     } else if (sp.getString("pass", null) == null) {
                         askPassphrase(true);
@@ -210,6 +218,26 @@ public class MainActivity extends Activity {
                 })
                 .setOnCancelListener(d -> dialogOpen = false);
         bd.show();
+    }
+
+    private void loadKeyCache() {
+        String k = sp.getString("key", null);
+        if (k != null) {
+            try {
+                cachedKey = Base64.decode(k, Base64.NO_WRAP);
+                cachedKeyId = sp.getString("key_id", "");
+            } catch (Exception e) {
+                cachedKey = null;
+                cachedKeyId = "";
+            }
+        }
+    }
+
+    private static String sha(String in) throws Exception {
+        byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(in.getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        for (byte b : d) sb.append(String.format("%02x", b));
+        return sb.toString();
     }
 
     // ------------------------------------------------------------------ WebView
@@ -291,18 +319,27 @@ public class MainActivity extends Activity {
         failedHost = currentHost;
         failedAt = System.currentTimeMillis();
         showingWeb = false;
-        showWaiting("Link dead hai", "Naya link dhundh raha hoon (" + why + ")");
+        showWaiting("Link is dead", "Looking for a new link (" + why + ")");
         pollNow();
     }
 
     private void loadHarness(String url) {
+        loadHarness(url, false);
+    }
+
+    private void loadHarness(String url, boolean quiet) {
         String host = Uri.parse(url).getHost();
         currentHost = host;
         lastLoadAt = System.currentTimeMillis();
         needFresh = false;
         if (host != null && !host.equals(failedHost)) failedHost = null;
         showingWeb = true;
-        showWaiting("Harness khul raha hai…", host == null ? "" : host);
+        if (quiet) {
+            overlay.setVisibility(View.GONE);
+        } else {
+            showWaiting("Opening Harness…", host == null ? "" : host);
+            sp.edit().putString("last_url", url).apply();
+        }
         web.loadUrl(url);
     }
 
@@ -340,7 +377,7 @@ public class MainActivity extends Activity {
                 askPassphrase(true);
                 return;
             case BAD_PASS:
-                showWaiting("Passphrase galat hai", "Sahi passphrase daalo (notebook ka LINK_PASSPHRASE)");
+                showWaiting("Wrong passphrase", "Enter the correct passphrase (the notebook's LINK_PASSPHRASE)");
                 askPassphrase(false);
                 schedule(POLL_SLOW_MS);
                 return;
@@ -349,7 +386,7 @@ public class MainActivity extends Activity {
                 next = POLL_FAST_MS;
                 break;
             case EMPTY:
-                if (!showingWeb) showWaiting("Link ka intezaar…", "Abhi koi link publish nahi hua");
+                if (!showingWeb) showWaiting("Waiting for link…", "No link has been published yet");
                 break;
             case OK: {
                 long age = System.currentTimeMillis() / 1000 - r.ts;
@@ -359,8 +396,8 @@ public class MainActivity extends Activity {
                 String host = hostOf(r.url);
                 if (!live) {
                     if (!showingWeb) {
-                        showWaiting(stale && !r.status.equals("offline") ? "State purana hai" : "Harness offline",
-                                "Node " + r.node + " · " + r.status + " · naya link aate hi khul jayega");
+                        showWaiting(stale && !r.status.equals("offline") ? "State is stale" : "Harness offline",
+                                "Node " + r.node + " · " + r.status + " · opens as soon as a new link is published");
                     }
                     break;
                 }
@@ -368,7 +405,7 @@ public class MainActivity extends Activity {
                     boolean sameFailed = host != null && host.equals(failedHost)
                             && System.currentTimeMillis() - failedAt < 60000;
                     if (!sameFailed) loadHarness(r.url);
-                    else showWaiting("Link dead hai", "Naya link ka intezaar…");
+                    else showWaiting("Link is dead", "Waiting for a new link…");
                 } else if (needFresh && System.currentTimeMillis() - lastLoadAt > 15000) {
                     loadHarness(r.url);
                 } else if (host != null && !host.equals(currentHost) && currentDead) {
@@ -450,13 +487,14 @@ public class MainActivity extends Activity {
     private String decrypt(JSONObject env, String pass) throws Exception {
         String salt = env.optString("salt", "dsh-link-v1");
         int it = env.optInt("it", 200000);
-        String id = pass + "|" + salt + "|" + it;
+        String id = sha(pass + "|" + salt + "|" + it);
         byte[] key = cachedKey;
         if (key == null || !id.equals(cachedKeyId)) {
             PBEKeySpec spec = new PBEKeySpec(pass.toCharArray(), salt.getBytes(StandardCharsets.UTF_8), it, 256);
             key = SecretKeyFactory.getInstance("PBKDF2withHmacSHA256").generateSecret(spec).getEncoded();
             cachedKey = key;
             cachedKeyId = id;
+            sp.edit().putString("key", Base64.encodeToString(key, Base64.NO_WRAP)).putString("key_id", id).apply();
         }
         byte[] iv = Base64.decode(env.getString("iv"), Base64.DEFAULT);
         byte[] ct = Base64.decode(env.getString("ct"), Base64.DEFAULT);
