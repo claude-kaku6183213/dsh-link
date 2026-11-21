@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.dshlink'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.dshlink'
+        minSdk 26
+        targetSdk 34
+        versionCode (System.getenv('GITHUB_RUN_NUMBER') ? System.getenv('GITHUB_RUN_NUMBER').toInteger() : 1)
+        versionName '1.0'
+    }
+
+    // Fixed keystore: har build same signature -> naya APK purane ke upar install ho jata hai.
+    signingConfigs {
+        dsh {
+            storeFile file('dsh.keystore')
+            storePassword 'dshlink123'
+            keyAlias 'dsh'
+            keyPassword 'dshlink123'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.dsh
+        }
+        release {
+            signingConfig signingConfigs.dsh
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+    }
+}
