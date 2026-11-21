@@ -12,7 +12,7 @@
 
   const LS_PASS = 'dsh_link_pass';
   const LS_AUTO = 'dsh_link_autoopen';
-  const APP_V = 'v2';            // footer me dikhta hai
+  const APP_V = 'v3';            // footer me dikhta hai
   const POLL_FAST_MS = 5000;      // link offline/stale (handover window) -> tez
   const POLL_LIVE_MS = 0;         // live hone pe polling BAND (0); offline pe 5s chalti hai
   const STALE_MS = 25 * 60 * 1000;
@@ -149,7 +149,10 @@
         ? 'State purana hai (>25 min). Harness shayad restart ho raha hai — thodi der me refresh karo.'
         : 'Harness abhi offline hai ya notebook start ho raha hai. Link aate hi ye page khud update ho jayega.';
 
-    if (live && $('autoopen').checked && lastOpened !== url) startCountdown(url);
+    if (live && $('autoopen').checked && lastOpened !== url && !/stay/.test(location.hash)) {
+      lastOpened = url;
+      location.replace(url);   // seedha Harness; Back dabane par launcher loop me nahi aayega
+    }
   }
 
   function startCountdown(url) {
@@ -345,7 +348,7 @@
 
   // ------------------------------------------------------------------ boot
   if ($('ver')) $('ver').textContent = 'app ' + APP_V + (CFG.supabase && CFG.supabase.anon ? ' \u00b7 supa \u2713' : ' \u00b7 supa \u2717 (config.js cache!)');
-  $('autoopen').checked = localStorage.getItem(LS_AUTO) === '1';
+  $('autoopen').checked = localStorage.getItem(LS_AUTO) !== '0';
   const saved = localStorage.getItem(LS_PASS);
   if (saved) { pass = saved; start(); } else { lock(''); }
 
