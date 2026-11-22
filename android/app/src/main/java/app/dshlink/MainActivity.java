@@ -403,7 +403,7 @@ public class MainActivity extends Activity {
                 }
                 if (!showingWeb) {
                     boolean sameFailed = host != null && host.equals(failedHost)
-                            && System.currentTimeMillis() - failedAt < 60000;
+                            && System.currentTimeMillis() - failedAt < 4000;   // new tunnel hosts need a while for DNS: retry every ~5s
                     if (!sameFailed) loadHarness(r.url);
                     else showWaiting("Link is dead", "Waiting for a new link…");
                 } else if (needFresh && System.currentTimeMillis() - lastLoadAt > 15000) {
