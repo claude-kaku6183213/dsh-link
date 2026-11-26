@@ -27,6 +27,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.Toast;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -87,6 +88,8 @@ public class MainActivity extends Activity {
     private volatile long failedAt = 0;
     private volatile long lastLoadAt = 0;
     private volatile boolean needFresh = false;
+    private volatile String lastErr = "";
+    private volatile String lastLiveUrl = null;
     private boolean polling = false;
     private boolean dialogOpen = false;
     private byte[] cachedKey;
@@ -132,9 +135,18 @@ public class MainActivity extends Activity {
         Button retry = new Button(this);
         retry.setText("Check now");
         retry.setOnClickListener(v -> pollNow());
+        Button browser = new Button(this);
+        browser.setText("Open in browser");
+        browser.setOnClickListener(v -> {
+            String u = lastLiveUrl != null ? lastLiveUrl : sp.getString("last_url", null);
+            if (u == null) { Toast.makeText(this, "No link yet", Toast.LENGTH_SHORT).show(); return; }
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(u))); }
+            catch (Exception e) { Toast.makeText(this, "No browser found", Toast.LENGTH_SHORT).show(); }
+        });
         box.addView(titleTv);
         box.addView(hintTv);
         box.addView(retry);
+        box.addView(browser);
         box.addView(pass);
         overlay = box;
         root.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -277,7 +289,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
-                if (r.isForMainFrame()) onMainFrameDead("error");
+                if (r.isForMainFrame()) onMainFrameDead(e.getErrorCode() + " " + e.getDescription());
             }
 
             @Override
@@ -318,8 +330,9 @@ public class MainActivity extends Activity {
     private void onMainFrameDead(String why) {
         failedHost = currentHost;
         failedAt = System.currentTimeMillis();
+        lastErr = why;
         showingWeb = false;
-        showWaiting("Link is dead", "Looking for a new link (" + why + ")");
+        showWaiting("Link is dead", currentHost + "\n" + why + "\nRetrying every few seconds");
         pollNow();
     }
 
@@ -394,6 +407,7 @@ public class MainActivity extends Activity {
                 boolean live = r.url.length() > 0 && !stale
                         && (r.status.equals("online") || r.status.equals("handoff") || r.status.equals("starting"));
                 String host = hostOf(r.url);
+                if (live) lastLiveUrl = r.url;
                 if (!live) {
                     if (!showingWeb) {
                         showWaiting(stale && !r.status.equals("offline") ? "State is stale" : "Harness offline",
@@ -405,7 +419,7 @@ public class MainActivity extends Activity {
                     boolean sameFailed = host != null && host.equals(failedHost)
                             && System.currentTimeMillis() - failedAt < 4000;   // new tunnel hosts need a while for DNS: retry every ~5s
                     if (!sameFailed) loadHarness(r.url);
-                    else showWaiting("Link is dead", "Waiting for a new link…");
+                    else showWaiting("Link is dead", host + "\n" + lastErr + "\nRetrying every few seconds");
                 } else if (needFresh && System.currentTimeMillis() - lastLoadAt > 15000) {
                     loadHarness(r.url);
                 } else if (host != null && !host.equals(currentHost) && currentDead) {
