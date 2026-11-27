@@ -1,7 +1,18 @@
 package app.dshlink;
 
 import android.app.Activity;
+import android.Manifest;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
+import android.content.ContentValues;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import android.os.Environment;
+import android.webkit.JavascriptInterface;
+import android.webkit.URLUtil;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -152,6 +163,9 @@ public class MainActivity extends Activity {
         root.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
         web.setBackgroundColor(0xFF0B1020);
+        if (Build.VERSION.SDK_INT <= 28 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 7002);
+        }
         loadKeyCache();
         String cached = sp.getString("last_url", null);
         if (sp.getString("pass", null) != null && cached != null) {
@@ -301,6 +315,9 @@ public class MainActivity extends Activity {
             }
         });
 
+        web.addJavascriptInterface(new Bridge(), "DSHApp");
+        web.setDownloadListener((url, ua, cd, mime, len) -> handleDownload(url, ua, cd, mime));
+
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
@@ -315,6 +332,104 @@ public class MainActivity extends Activity {
                 return true;
             }
         });
+    }
+
+    // ------------------------------------------------------------------ downloads
+    final class Bridge {
+        @JavascriptInterface
+        public void save(final String b64, final String mime, final String name) {
+            new Thread(() -> {
+                try {
+                    byte[] data = Base64.decode(b64, Base64.DEFAULT);
+                    String saved = saveToDownloads(name, mime, data);
+                    toast("Saved to Downloads: " + saved);
+                } catch (Throwable e) {
+                    toast("Save failed: " + e.getMessage());
+                }
+            }).start();
+        }
+
+        @JavascriptInterface
+        public void fail(final String msg) {
+            toast("Download failed: " + msg);
+        }
+    }
+
+    static final class MediaStoreDownloads {
+        static Uri uri() {
+            return android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+        }
+    }
+
+    private void toast(final String m) {
+        runOnUiThread(() -> Toast.makeText(MainActivity.this, m, Toast.LENGTH_LONG).show());
+    }
+
+    private static String cleanName(String n) {
+        String x = (n == null || n.trim().isEmpty()) ? "download" : n.trim();
+        return x.replaceAll("[\\\\/:*?\"<>|]", "_");
+    }
+
+    private String saveToDownloads(String name, String mime, byte[] data) throws Exception {
+        String fn = cleanName(name);
+        String mt = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentValues cv = new ContentValues();
+            cv.put("_display_name", fn);
+            cv.put("mime_type", mt);
+            cv.put("relative_path", "Download/");
+            Uri u = getContentResolver().insert(MediaStoreDownloads.uri(), cv);
+            if (u == null) throw new Exception("could not create file");
+            try (OutputStream os = getContentResolver().openOutputStream(u)) {
+                os.write(data);
+            }
+            return fn;
+        }
+        File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        dir.mkdirs();
+        File f = new File(dir, fn);
+        int i = 1;
+        while (f.exists()) {
+            int dot = fn.lastIndexOf('.');
+            String n2 = dot > 0 ? fn.substring(0, dot) + " (" + i + ")" + fn.substring(dot) : fn + " (" + i + ")";
+            f = new File(dir, n2);
+            i++;
+        }
+        try (FileOutputStream os = new FileOutputStream(f)) {
+            os.write(data);
+        }
+        return f.getName();
+    }
+
+    private void handleDownload(String url, String ua, String cd, String mime) {
+        String name = cleanName(URLUtil.guessFileName(url, cd, mime));
+        if (url.startsWith("blob:") || url.startsWith("data:")) {
+            // blob/data URLs sirf page ke andar padhe ja sakte hain: JS se bytes nikalkar app ko do
+            String esc = url.replace("\\", "\\\\").replace("'", "\\'");
+            String nm = name.replace("\\", "\\\\").replace("'", "\\'");
+            String js = "(function(){try{var x=new XMLHttpRequest();x.open('GET','" + esc + "',true);x.responseType='blob';"
+                    + "x.onload=function(){var r=new FileReader();r.onloadend=function(){var d=String(r.result);"
+                    + "DSHApp.save(d.substring(d.indexOf(',')+1),(x.response&&x.response.type)||'application/octet-stream','" + nm + "');};"
+                    + "r.readAsDataURL(x.response);};x.onerror=function(){DSHApp.fail('could not read file');};x.send();}"
+                    + "catch(e){DSHApp.fail(String(e));}})();";
+            web.evaluateJavascript(js, null);
+            toast("Preparing " + name + "…");
+            return;
+        }
+        try {
+            DownloadManager.Request rq = new DownloadManager.Request(Uri.parse(url));
+            String ck = CookieManager.getInstance().getCookie(url);
+            if (ck != null) rq.addRequestHeader("Cookie", ck);
+            if (ua != null) rq.addRequestHeader("User-Agent", ua);
+            if (mime != null && !mime.isEmpty()) rq.setMimeType(mime);
+            rq.setTitle(name);
+            rq.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            rq.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+            ((DownloadManager) getSystemService(DOWNLOAD_SERVICE)).enqueue(rq);
+            toast("Downloading " + name);
+        } catch (Exception e) {
+            toast("Download failed: " + e.getMessage());
+        }
     }
 
     @Override
