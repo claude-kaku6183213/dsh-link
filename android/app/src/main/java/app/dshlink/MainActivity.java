@@ -101,6 +101,11 @@ public class MainActivity extends Activity {
     private volatile boolean needFresh = false;
     private volatile String lastErr = "";
     private volatile String lastLiveUrl = null;
+    private volatile String lastLoadedUrl = null;
+    static final String HOOK_JS = "(function(){if(window.__dshHook)return;window.__dshHook=1;window.__dshNames={};"
+            + "var oc=HTMLAnchorElement.prototype.click;"
+            + "HTMLAnchorElement.prototype.click=function(){try{if(this.download){window.__dshNames[this.href]=this.download;window.__dshLast=this.download;}}catch(e){}return oc.apply(this,arguments);};"
+            + "document.addEventListener('click',function(e){try{var a=e.target&&e.target.closest&&e.target.closest('a[download]');if(a&&a.download){window.__dshNames[a.href]=a.download;window.__dshLast=a.download;}}catch(x){}},true);})();";
     private boolean polling = false;
     private boolean dialogOpen = false;
     private byte[] cachedKey;
@@ -297,7 +302,13 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onPageStarted(WebView v, String url, android.graphics.Bitmap icon) {
+                v.evaluateJavascript(HOOK_JS, null);
+            }
+
+            @Override
             public void onPageFinished(WebView v, String url) {
+                v.evaluateJavascript(HOOK_JS, null);
                 if (showingWeb && failedHost == null) overlay.setVisibility(View.GONE);
             }
 
@@ -401,8 +412,44 @@ public class MainActivity extends Activity {
         return f.getName();
     }
 
-    private void handleDownload(String url, String ua, String cd, String mime) {
-        String name = cleanName(URLUtil.guessFileName(url, cd, mime));
+    private static String unquoteJs(String v) {
+        if (v == null || v.equals("null")) return "";
+        try { return new JSONArray("[" + v + "]").optString(0, ""); } catch (Exception e) { return ""; }
+    }
+
+    private static String nameFromUrl(String url) {
+        try {
+            Uri u = Uri.parse(url);
+            for (String k : new String[]{"filename", "file", "name", "path"}) {
+                String q = u.getQueryParameter(k);
+                if (q != null && !q.isEmpty()) {
+                    String b = q.substring(q.lastIndexOf('/') + 1);
+                    if (b.contains(".")) return b;
+                }
+            }
+            String seg = u.getLastPathSegment();
+            if (seg != null && seg.contains(".")) return seg;
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    private String pickName(String url, String cd, String mime, String hinted) {
+        boolean hasCd = cd != null && cd.toLowerCase().contains("filename");
+        if (!hasCd) {
+            if (hinted != null && !hinted.trim().isEmpty()) return cleanName(hinted);
+            String q = nameFromUrl(url);
+            if (q != null) return cleanName(q);
+        }
+        return cleanName(URLUtil.guessFileName(url, cd, mime));
+    }
+
+    private void handleDownload(final String url, final String ua, final String cd, final String mime) {
+        String js = "(function(){try{var m=window.__dshNames||{};return m[" + JSONObject.quote(url) + "]||window.__dshLast||'';}catch(e){return '';}})()";
+        web.evaluateJavascript(js, v -> proceedDownload(url, ua, cd, mime, unquoteJs(v)));
+    }
+
+    private void proceedDownload(String url, String ua, String cd, String mime, String hinted) {
+        String name = pickName(url, cd, mime, hinted);
         if (url.startsWith("blob:") || url.startsWith("data:")) {
             // blob/data URLs sirf page ke andar padhe ja sakte hain: JS se bytes nikalkar app ko do
             String esc = url.replace("\\", "\\\\").replace("'", "\\'");
@@ -459,6 +506,7 @@ public class MainActivity extends Activity {
         String host = Uri.parse(url).getHost();
         currentHost = host;
         lastLoadAt = System.currentTimeMillis();
+        lastLoadedUrl = url;
         needFresh = false;
         if (host != null && !host.equals(failedHost)) failedHost = null;
         showingWeb = true;
@@ -537,6 +585,9 @@ public class MainActivity extends Activity {
                     else showWaiting("Link is dead", host + "\n" + lastErr + "\nRetrying every few seconds");
                 } else if (needFresh && System.currentTimeMillis() - lastLoadAt > 15000) {
                     loadHarness(r.url);
+                } else if (host != null && host.equals(currentHost) && lastLoadedUrl != null && !r.url.equals(lastLoadedUrl)
+                        && System.currentTimeMillis() - lastLoadAt > 10000) {
+                    loadHarness(r.url);   // same tunnel, naya token (dsh restart) -> page khud reload
                 } else if (host != null && !host.equals(currentHost) && currentDead) {
                     loadHarness(r.url);
                 }
